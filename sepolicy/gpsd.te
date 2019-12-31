@@ -1,0 +1,8 @@
+type gpsd, domain;
+type gpsd_exec, exec_type, file_type;
+allow gpsd sensorservice_service:service_manager find;
+allow gpsd servicemanager:binder call;
+
+allow gpsd system_server:binder call;
+allow gpsd system_server:fd use;
+allow gpsd system_server:unix_stream_socket { read write };

@@ -1,0 +1,205 @@
+#
+# Copyright 2014 The Android Open Source Project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+import init.santos10.usb.rc
+
+on early-init
+    mount debugfs debugfs /sys/kernel/debug mode=0755
+
+    # IMG Graphics
+    symlink /dev/dri/card0 /dev/card0
+
+    # Use multistream for ZRAM
+    write /sys/block/zram0/max_comp_streams 4
+
+    # Swap parameters
+    write /proc/sys/vm/swappiness 30
+    write /proc/sys/vm/dirty_ratio 20
+    write /proc/sys/vm/dirty_background_ratio 15
+    write /proc/sys/vm/vfs_cache_pressure 50
+
+    # Increase read-ahead value to 256 kb
+    write /sys/block/mmcblk0/queue/read_ahead_kb 256
+
+    # Boost startup
+    write /sys/devices/system/cpu/cpufreq/interactive/boost 1
+
+on init
+    symlink /sdcard /storage/sdcard0
+
+    # Symlink for modem binary path
+    symlink /dev/block/mmcblk0p12 /dev/mbin0
+
+    # camera daemon cpuset
+    mkdir /dev/cpuset/camera-daemon
+    write /dev/cpuset/camera-daemon/cpus 0
+    write /dev/cpuset/camera-daemon/mems 0
+    chown system system /dev/cpuset/camera-daemon
+    chown system system /dev/cpuset/camera-daemon/tasks
+    chmod 0664 /dev/cpuset/camera-daemon/tasks
+
+    # Tune cpusets parameters
+    write /dev/cpuset/foreground/cpus 0-3
+    write /dev/cpuset/foreground/boost/cpus 0-3
+    write /dev/cpuset/background/cpus 0
+    write /dev/cpuset/system-background/cpus 0-1
+    write /dev/cpuset/top-app/cpus 0-3
+    write /dev/cpuset/camera-daemon/cpus 2-3
+
+on fs
+    mkdir /logs 0770 system log
+    mkdir /efs 0775 radio system
+
+    mount_all /fstab.santos10
+    swapon_all /fstab.santos10
+
+on post-fs
+    # screen backlight
+    chown system system /sys/class/backlight/panel/brightness
+
+    # touchkey backlight
+    chown system system /sys/class/sec/sec_touchkey/brightness
+    chown system system /sys/class/sec/sec_touchkey/light_on_touch
+
+    # touchkey size
+    chown system system /sys/class/sec/sec_touchkey/large_keys
+
+    # geomagnetic
+    chown root input /sys/class/input/input5/enable
+    chown root input /sys/class/input/input5/poll_delay
+
+    # geomagnetic_raw
+    chown compass root /sys/class/input/input6/dynamic_matrix
+    chown compass root /sys/class/input/input6/offsets
+
+    # ir
+    chown system system /sys/class/sec/sec_ir/ir_send
+
+    # key disabler
+    chown system system /sys/class/sec/sec_touchkey/keypad_enable
+
+    # touchscreen disabler
+    chown system system /sys/class/input/input1/enabled
+
+    # mdnie
+    chown system system /sys/class/mdnie/mdnie/cabc
+    chown system system /sys/class/mdnie/mdnie/mode
+    chown system system /sys/class/mdnie/mdnie/scenario
+    chown system system /sys/class/mdnie/mdnie/negative
+
+on post-fs-data
+    # Bluetooth
+    setprop ro.bt.bdaddr_path "/efs/bluetooth/bt_addr"
+    chmod 0660 /sys/class/rfkill/rfkill0/state
+    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill0/state
+    chown bluetooth net_bt_stack /sys/class/rfkill/rfkill0/type
+
+    # GPS
+    chmod 0664 /sys/devices/pci0000:00/0000:00:05.1/power/control
+    chown system system /sys/devices/pci0000:00/0000:00:05.1/power/control
+    chmod 0664 /sys/class/sec/gps/GPS_PWR_EN/value
+    chown system system /sys/class/sec/gps/GPS_PWR_EN/value
+    mkdir /data/system/gps 0771 system system
+
+    # Symlink directories to access telephony.db and preferred-apn.xml required by cbd
+    symlink /data/user_de/0/com.android.providers.telephony/databases /data/data/com.android.providers.telephony/databases
+    symlink /data/user_de/0/com.android.providers.telephony/shared_prefs /data/data/com.android.providers.telephony/shared_prefs
+
+    start cpboot-daemon
+
+    setprop vold.post_fs_data_done 1
+
+on property:dev.bootcomplete=1
+    # Balanced power profile parameters
+    write /sys/devices/system/cpu/cpufreq/interactive/boost 0
+    write /sys/devices/system/cpu/cpufreq/interactive/go_hispeed_load 80
+    write /sys/devices/system/cpu/cpufreq/interactive/hispeed_freq 933000
+    write /sys/devices/system/cpu/cpufreq/interactive/target_loads "85 1333000:95 1600000:99"
+
+# RIL
+service cpboot-daemon /system/vendor/bin/cbd -d
+    class main
+    user root
+    group radio cache inet misc audio sdcard_rw log sdcard_r
+    disabled
+    seclabel u:r:cpboot-daemon:s0
+
+# Wifi
+service wpa_supplicant /system/bin/wpa_supplicant \
+   -iwlan0 -Dnl80211 -c/data/misc/wifi/wpa_supplicant.conf \
+   -I/system/etc/wifi/wpa_supplicant_overlay.conf \
+   -e/data/misc/wifi/entropy.bin \
+   -g@android:wpa_wlan0
+    class main
+    socket wpa_wlan0 dgram 660 wifi wifi
+    group system wifi inet bluetooth
+    disabled
+    oneshot
+
+# Wifi-Direct
+service p2p_supplicant /system/bin/wpa_supplicant \
+   -iwlan0 -Dnl80211 -c/data/misc/wifi/wpa_supplicant.conf \
+   -I/system/etc/wifi/wpa_supplicant_overlay.conf -N \
+   -ip2p0 -Dnl80211 -c/data/misc/wifi/p2p_supplicant.conf \
+   -I/system/etc/wifi/p2p_supplicant_overlay.conf \
+   -puse_p2p_group_interface=1 \
+   -e/data/misc/wifi/entropy.bin \
+   -g@android:wpa_wlan0
+    class main
+    socket wpa_wlan0 dgram 660 wifi wifi
+    disabled
+    oneshot
+
+# GPS
+service gpsd /system/vendor/bin/gpsd -c /system/etc/gps.xml
+    class main
+    socket gps seqpacket 0660 gps system
+    user gps
+    group system inet net_raw
+    ioprio be 0
+    seclabel u:r:gpsd:s0
+
+# IMG Graphics
+service pvrsrvctl /system/bin/pvrsrvctl
+    class core
+    user root
+    oneshot
+    seclabel u:r:pvrsrvctl:s0
+
+# Sensors
+service geomagneticd /system/vendor/bin/geomagneticd
+    class main
+    user compass
+    group system input
+    seclabel u:r:geomagneticd:s0
+
+# HDMI helper
+service hdmi_helper /system/bin/hdmi_helper
+    class main
+    user system
+    group graphics
+    seclabel u:r:hdmi_helper:s0
+
+# Charger mode
+service charger /sbin/healthd -c
+    class charger
+    critical
+    seclabel u:r:healthd:s0
+
+# Enable native bridge for target executables
+on property:ro.enable.native.bridge.exec=1
+    copy /system/etc/binfmt_misc/arm_exe /proc/sys/fs/binfmt_misc/register
+    copy /system/etc/binfmt_misc/arm_dyn /proc/sys/fs/binfmt_misc/register

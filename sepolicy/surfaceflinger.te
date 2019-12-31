@@ -1,0 +1,4 @@
+# hdmi_helper / display.intel.mds
+#allow surfaceflinger display_service:service_manager { add find };
+
+allow surfaceflinger system_file:file execmod;
